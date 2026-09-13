@@ -1,9 +1,9 @@
-# Omarchy
+# Omartix
 
-Omarchy is a beautiful, modern & opinionated Linux distribution by DHH.
+Omartix is a beautiful, modern & opinionated Linux distribution based on Artix and Omarchy by DHH.
 
 Read more at [omarchy.org](https://omarchy.org).
 
 ## License
 
-Omarchy is released under the [MIT License](https://opensource.org/licenses/MIT).
+Omartix is released under the [MIT License](https://opensource.org/licenses/MIT).
