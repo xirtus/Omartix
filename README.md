@@ -1,50 +1,49 @@
 # Artix Linux + Omarchy (Runit Edition)
 
-Este repositorio contiene un instalador completo para desplegar **Artix Linux (Runit)** con sistema de archivos BTRFS cifrado (LUKS2) y configurar automáticamente la distribución **Omarchy**.
+This repository contains a complete installer to deploy **Artix Linux (Runit)** with an encrypted BTRFS filesystem (LUKS2) and automatically configure the **Omarchy** distribution.
 
-## Estructura del Proyecto
+## Project Structure
 
-*   `base-install/`: Scripts para instalar el sistema base Artix (Particionamiento, Cifrado, Kernel, Bootloader).
-*   `bridge/`: Capa de compatibilidad para adaptar Omarchy (originalmente Systemd) a Artix (Runit).
-*   `omarchy-config/`: Archivos de configuración y scripts originales de Omarchy.
+*   `base-install/`: Scripts to install the base Artix system (partitioning, encryption, kernel, bootloader).
+*   `bridge/`: Compatibility layer to adapt Omarchy (originally Systemd-based) to Artix (Runit).
+*   `omarchy-config/`: Original Omarchy configuration files and scripts.
 
-## Guía de Instalación
+## Installation Guide
 
-### Requisitos Previos
-1.  Arrancar con una ISO de Artix Linux (versión **runit**).
-2.  Conexión activa a Internet (WiFi o Ethernet).
-3.  Estar conectado a la corriente (si es un portátil).
+### Prerequisites
+1.  Boot using an Artix Linux ISO (the **runit** version).
+2.  Active Internet connection (WiFi or Ethernet).
+3.  Connected to a power source (if using a laptop).
 
-### Paso 1: Sistema Base
-1.  Clona este repositorio o copia la carpeta `artix-omarchy-repo` a la máquina en vivo.
-2.  Entra en la carpeta de instalación base:
-    ```bash
-    cd artix-omarchy-repo/base-install
-    ```
-3.  Ejecuta el instalador maestro:
-    ```bash
-    ./install.sh
-    ```
-    *   Sigue las instrucciones en pantalla para seleccionar el disco y establecer contraseñas.
-    *   Al finalizar, escribe `reboot` y retira el USB.
+### Step 1: Base System
+1.  Clone this repository or copy the `artix-omarchy-repo` folder to the live system.
+2.  Enter the base installation folder:
+```bash
+cd artix-omarchy-repo/base-install
+```
+3.  Run the master installer:
+```bash
+./install.sh
+```
+*   Follow the on-screen instructions to select the disk and set passwords. 
+*   Once finished, type `reboot` and remove the USB drive.
 
-### Paso 2: Instalación de Omarchy
-Una vez hayas reiniciado y logueado en tu nuevo sistema Artix (pantalla negra/TTY):
+### Step 2: Omarchy Installation
+After rebooting and logging into your new Artix system (black screen/TTY):
 
-1.  Vuelve a clonar o copiar este repositorio (ya que el disco se borró).
-    *   *Nota: Si instalaste git en el paso anterior, puedes clonarlo directamente.*
-2.  Navega a la carpeta del "puente":
-    ```bash
-    cd artix-omarchy-repo/bridge
-    ```
-3.  Ejecuta el instalador de Omarchy adaptado:
-    ```bash
-    ./install-omarchy.sh
-    ```
-    *   Este script instalará los paquetes necesarios, activará la capa de compatibilidad `systemctl-shim` y aplicará las configuraciones.
+1.  Clone or copy this repository again (since the disk was wiped). *   *Note: If you installed git in the previous step, you can clone it directly.*
+2.  Navigate to the "bridge" folder:
+```bash
+cd artix-omarchy-repo/bridge
+```
+3.  Run the adapted Omarchy installer:
+```bash
+./install-omarchy.sh
+```
+*   This script will install the necessary packages, enable the `systemctl-shim` compatibility layer, and apply the configurations.
 
-## Notas Técnicas
+## Technical Notes
 
-*   **UEFI:** El instalador está diseñado exclusivamente para sistemas UEFI.
-*   **Docker:** Se crea un subvolumen especial `@docker` optimizado (No-COW) en `/var/lib/docker`.
-*   **Compatibilidad:** Se usa un *shim* personalizado para interceptar llamadas de `systemctl` y traducirlas a comandos de `runit` (sv), asegurando que los servicios de Omarchy funcionen correctamente.
+*   **UEFI:** The installer is designed exclusively for UEFI systems.
+*   **Docker:** A special optimized (No-COW) subvolume named `@docker` is created at `/var/lib/docker`.
+*   **Compatibility:** A custom *shim* is used to intercept `systemctl` calls and translate them into `runit` (sv) commands, ensuring that Omarchy services function correctly.
