@@ -1,5 +1,7 @@
 # OMARTIX = Artix Linux + Omarchy (Runit Edition)
 
+<img width="1680" height="1184" alt="grok-image-0d33d396-38d9-4d9e-add9-fb214b225cfc" src="https://github.com/user-attachments/assets/60be1ca4-9def-4beb-991d-740dfa7fa0eb" />
+
 This repository contains a complete installer to deploy **Artix Linux (Runit)** with an encrypted BTRFS filesystem (LUKS2) and automatically configure the **Omarchy** distribution.
 
 ## Project Structure
