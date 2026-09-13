@@ -1,0 +1,13 @@
+# Pinned upstream Omarchy source for the vendored tree in this directory.
+# Re-sync with:
+#   git clone --depth 1 --branch quattro https://github.com/omacom/omarchy.git /tmp/omarchy
+#   rsync -a --exclude=.git /tmp/omarchy/ omarchy-config/
+#
+# The runit/Artix adaptation lives OUTSIDE this directory (see ../runit, ../bridge),
+# so this tree can be re-synced wholesale without losing Omartix changes.
+
+upstream_repo=https://github.com/omacom/omarchy.git
+upstream_branch=quattro
+upstream_commit=b679363bed05415771a1b1dc92c6899a908236f7
+upstream_version=4.0.0.alpha
+synced_at=2026-09-14
