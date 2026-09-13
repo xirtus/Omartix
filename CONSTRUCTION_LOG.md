@@ -1,47 +1,45 @@
-# Registro de Construcción: Artix Omarchy (Runit Edition)
+# Build Log: Artix Omarchy (Runit Edition)
 
-Este documento resume la arquitectura, decisiones de diseño y correcciones críticas implementadas durante la creación de este instalador. Sirve como contexto para futuras modificaciones.
+This document summarizes the architecture, design decisions, and critical fixes implemented during the creation of this installer. It serves as context for future modifications.
 
-## 1. Arquitectura del Sistema
-*   **Base:** Artix Linux (Edición Runit).
-*   **Kernel:** Linux (estándar) con microcódigo dual (Intel/AMD).
-*   **Sistema de Archivos:** BTRFS con compresión `zstd:1` y subvolúmenes optimizados.
-*   **Cifrado:** LUKS2 (AES-XTS-Plain64).
+## 1. System Architecture
+*   **Base:** Artix Linux (Runit Edition).
+*   **Kernel:** Linux (standard) with dual microcode (Intel/AMD).
+*   **File System:** BTRFS with `zstd:1` compression and optimized subvolumes.
+*   **Encryption:** LUKS2 (AES-XTS-Plain64).
 *   **Bootloader:** Limine (UEFI Fallback mode).
-*   **Configuración:** Omarchy Distribution (adaptada mediante capa de compatibilidad).
+*   **Configuration:** Omarchy Distribution (adapted via compatibility layer).
 
-## 2. Características Implementadas (Fase 1: Base)
+## 2. Implemented Features (Phase 1: Base)
 *   **BTRFS Layout:**
-    *   `@`: Root.
-    *   `@home`: Datos de usuario.
-    *   `@snapshots`: Integración con Snapper.
-    *   `@docker`: **No-COW** (`chattr +C`) para rendimiento óptimo de contenedores.
-    *   `@pkg`, `@log`, `@tmp`: Excluidos de snapshots para ahorrar espacio.
-*   **Resiliencia:**
-    *   Detección inteligente de particiones para discos NVMe/eMMC (`p1`, `p2`) vs SATA (`1`, `2`).
-    *   Habilitación de `ParallelDownloads` para instalaciones rápidas.
-    *   Actualización forzada de keyrings antes de instalar para evitar errores de firma GPG.
-*   **UEFI:** Instalación en ruta `Fallback` (`/EFI/BOOT/BOOTX64.EFI`) para máxima portabilidad sin depender de variables NVRAM.
-*   **Optimización:**
-    *   **ZRAM:** Swap comprimido en RAM (50% de capacidad) mediante servicio Runit nativo.
-    *   **NVIDIA:** Instalación automática de drivers DKMS y configuración de DRM/KMS para Wayland/Hyprland.
-    *   **SSD:** Script semanal de `fstrim` vía cron.
-
-## 3. Capa de Compatibilidad (Fase 2: Bridge)
+*   `@`: Root. 
+*   `@home`: User data. 
+*   `@snapshots`: Snapper integration. 
+*   `@docker`: **No-COW** (`chattr +C`) for optimal container performance. 
+*   `@pkg`, `@log`, `@tmp`: Excluded from snapshots to save space.
+*   **Resilience:**
+*   Smart partition detection for NVMe/eMMC drives (`p1`, `p2`) vs. SATA (`1`, `2`). 
+*   `ParallelDownloads` enabled for fast installations. 
+*   Forced keyring update prior to installation to prevent GPG signature errors.
+*   **UEFI:** Installation to `Fallback` path (`/EFI/BOOT/BOOTX64.EFI`) for maximum portability without relying on NVRAM variables.
+*   **Optimization:**
+*   **ZRAM:** Compressed swap in RAM (50% capacity) via native Runit service. 
+*   **NVIDIA:** Automatic DKMS driver installation and DRM/KMS configuration for Wayland/Hyprland. 
+*   **SSD:** Weekly `fstrim` script via cron. ## 3. Compatibility Layer (Phase 2: Bridge)
 *   **Systemctl Shim:**
-    *   Intercepta comandos `systemctl` y los traduce a `sv` (Runit).
-    *   Gestiona la **persistencia** vinculando servicios a `/etc/runit/runsvdir/default`.
-    *   Mapea nombres de servicios de Systemd a Runit (ej: `bluetooth` -> `bluetoothd`).
-*   **Patching Dinámico:**
-    *   `patch-packages.sh`: Modifica las listas de paquetes de Omarchy para inyectar versiones `-runit`.
-    *   `sed` runtime: Reemplaza referencias a `systemd-networkd/resolved` por `NetworkManager` en los scripts de Omarchy.
+*   Intercepts `systemctl` commands and translates them to `sv` (Runit). 
+*   Manages **persistence** by linking services to `/etc/runit/runsvdir/default`. 
+*   Maps Systemd service names to Runit (e.g., `bluetooth` -> `bluetoothd`).
+*   **Dynamic Patching:**
+*   `patch-packages.sh`: Modifies Omarchy package lists to inject `-runit` versions. 
+*   Runtime `sed`: Replaces references to `systemd-networkd/resolved` with `NetworkManager` in Omarchy scripts.
 
-## 4. Flujo de Trabajo para el Usuario
-1.  **Boot Live:** Usar `connmanctl` para red.
-2.  **Fase 1:** `./install.sh` (Base). El instalador se copia automáticamente a `~/artix-installer`.
-3.  **Fase 2:** `./bridge/install-omarchy.sh` (Configuración). Usa `nmtui` para red.
+## 4. User Workflow
+1.  **Live Boot:** Use `connmanctl` for networking.
+2.  **Phase 1:** `./install.sh` (Base). The installer is automatically copied to `~/artix-installer`.
+3.  **Phase 2:** `./bridge/install-omarchy.sh` (Configuration). Use `nmtui` for networking.
 
-## 5. Notas para el Futuro
-*   **Añadir Software:** Si se añaden aplicaciones que dependan de servicios, actualizar el `systemctl-shim` con los nuevos mapeos de nombres si difieren de la versión de Arch.
-*   **Kernels:** Si se cambia a `linux-lts` o `linux-zen`, recordar actualizar `limine.cfg` y el hook de `nvidia-dkms`.
-*   **Multilib:** Ya está habilitado por defecto para dar soporte a Steam/Wine.
+## 5. Future Notes
+*   **Adding Software:** If applications depending on services are added, update `systemctl-shim` with the new name mappings if they differ from the Arch version.
+*   **Kernels:** If switching to `linux-lts` or `linux-zen`, remember to update `limine.cfg` and the `nvidia-dkms` hook.
+*   **Multilib:** Already enabled by default to support Steam/Wine.
