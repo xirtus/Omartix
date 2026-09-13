@@ -1,4 +1,4 @@
-# Artix Linux + Omarchy (Runit Edition)
+# OMARTIX = Artix Linux + Omarchy (Runit Edition)
 
 This repository contains a complete installer to deploy **Artix Linux (Runit)** with an encrypted BTRFS filesystem (LUKS2) and automatically configure the **Omarchy** distribution.
 
