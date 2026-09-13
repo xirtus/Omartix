@@ -1,0 +1,28 @@
+#!/bin/sh
+# First-boot provisioning (deferred installs / factory reset): ask for the user
+# on tty1, finalize, then hand off to SDDM. Native replacement for
+# install/provisioning/omarchy-provision-owner.service.
+exec 2>&1
+
+PENDING=/var/lib/omarchy/provisioning/pending
+
+# Inert unless deferred provisioning is armed.
+[ -f "$PENDING" ] || exec sleep infinity
+# Never set up a user on a half-wiped system.
+[ -f /var/lib/omarchy/provisioning/wipe-pending ] && exec sleep infinity
+
+if command -v omarchy-provision-owner >/dev/null 2>&1; then
+  # The wizard is interactive; give it the real console (mirrors TTYPath=/dev/tty1).
+  omarchy-provision-owner </dev/tty1 >/dev/tty1 2>&1 || true
+fi
+
+# Hand off to SDDM and stand down. In the deferred flow sddm is not enabled yet,
+# so this mirrors Before=display-manager.service.
+if command -v omartix-services >/dev/null 2>&1; then
+  omartix-services enable sddm >/dev/null 2>&1 || true
+else
+  ln -sf /etc/runit/sv/sddm /etc/runit/runsvdir/default/sddm 2>/dev/null || true
+fi
+sv start sddm 2>/dev/null || true
+
+exec sleep infinity

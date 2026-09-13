@@ -1,0 +1,16 @@
+#!/bin/sh
+# ZRAM compressed swap (50% of RAM, zstd). Artix has no zram-generator; this is
+# the runit-native replacement. Mirrors Omarchy's default/systemd/
+# zram-generator.conf.d behaviour at 50% capacity.
+exec 2>&1
+
+if command -v zramctl >/dev/null 2>&1; then
+  modprobe zram num_devices=1 2>/dev/null || true
+  zramctl --reset /dev/zram0 2>/dev/null || true
+  if zramctl --find --size 50% --algorithm zstd 2>/dev/null; then
+    mkswap /dev/zram0 >/dev/null 2>&1 || true
+    swapon /dev/zram0 2>/dev/null || true
+  fi
+fi
+
+exec sleep infinity

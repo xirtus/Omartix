@@ -1,0 +1,30 @@
+#!/bin/bash
+# hostnamectl — runit shim (no systemd-hostnamed on Artix).
+set -uo pipefail
+
+while (($#)); do
+  case "$1" in
+    set-hostname)
+      name="${2:-}"
+      if [[ -z $name ]]; then
+        echo "Error: missing hostname" >&2
+        exit 1
+      fi
+      printf '%s\n' "$name" >/etc/hostname
+      command -v hostname >/dev/null 2>&1 && hostname "$name" || true
+      exit 0
+      ;;
+    status)
+      echo "   Static hostname: $(cat /etc/hostname 2>/dev/null || echo '(none)')"
+      exit 0
+      ;;
+    --no-pager|--no-ask-password|-q|--quiet|--static|--transient|--pretty) ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+echo "$(cat /etc/hostname 2>/dev/null || true)"

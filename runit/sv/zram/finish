@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+swapoff /dev/zram0 2>/dev/null || true
+zramctl --reset /dev/zram0 2>/dev/null || true

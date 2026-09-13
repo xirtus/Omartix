@@ -1,0 +1,20 @@
+#!/bin/bash
+# dbus-update-activation-environment — runit shim.
+#
+# Omarchy calls `dbus-update-activation-environment --systemd --all` from the
+# Hyprland autostart. There is no systemd user manager on Artix, so drop the
+# --systemd flag and forward the rest to the real dbus tool (the session bus
+# activation environment is still updated for D-Bus-activated services).
+
+args=()
+for arg in "$@"; do
+  [[ $arg == "--systemd" ]] && continue
+  args+=("$arg")
+done
+
+if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  # Call the real binary by absolute path so we don't recurse into ourselves.
+  /usr/bin/dbus-update-activation-environment "${args[@]}" 2>/dev/null || true
+fi
+
+exit 0

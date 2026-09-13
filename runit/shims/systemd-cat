@@ -1,0 +1,14 @@
+#!/bin/bash
+# systemd-cat — runit shim: run the command without journal tagging.
+# Used by omarchy-launch-shell to start the Quickshell desktop.
+args=()
+while (($#)); do
+  case "$1" in
+    -t|--identifier) shift ;;
+    -*) ;;
+    *) args+=("$@"); break ;;
+  esac
+  shift
+done
+[[ ${#args[@]} -eq 0 ]] && exit 0
+exec "${args[@]}"

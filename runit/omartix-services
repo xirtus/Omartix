@@ -1,0 +1,176 @@
+#!/bin/bash
+# omartix-services — enable/disable/status for the Omartix runit service layer.
+#
+# This is the single source of truth for the systemd → runit service mapping
+# used to adapt Omarchy (systemd) to Artix (runit). The same table is reused by
+# the `systemctl` shim and by Nullset (Void/runit) later, since both use runit.
+#
+# System services that Artix ships a `-runit` package for are enabled simply by
+# linking `/etc/runit/sv/<name>` into `/etc/runit/runsvdir/default/`. Services
+# with no Artix package live in the bundled `sv/` tree and are copied to
+# `/etc/runit/sv/` on install.
+
+set -euo pipefail
+
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+SYSTEM_SV_AVAIL="/etc/runit/sv"
+SYSTEM_SV_ENABLED="/etc/runit/runsvdir/default"
+
+# systemd unit name → runit service directory name (as shipped by Artix `-runit`
+# packages, or by our bundled sv/ tree). `.service` suffixes are optional on the
+# left-hand side; the shim normalises them away before consulting this map.
+declare -A RUNIT_NAME=(
+  [NetworkManager]=NetworkManager
+  [bluetooth]=bluetoothd
+  [cups]=cupsd
+  [cups-browsed]=cups-browsed
+  [docker]=docker
+  [avahi-daemon]=avahi-daemon
+  [ufw]=ufw
+  [iwd]=iwd
+  [sddm]=sddm
+  [gdm]=gdm
+  [lightdm]=lightdm
+  [power-profiles-daemon]=power-profiles-daemon
+  [dbus]=dbus
+  [elogind]=elogind
+  [acpid]=acpid
+  [seatd]=seatd
+  [alsa-restore]=alsa
+  [fcron]=fcron
+  [cronie]=fcron
+  [systemd-oomd]=earlyoom
+  [systemd-resolved]=systemd-resolved
+  [systemd-timesyncd]=systemd-timesyncd
+  [linux-modules-cleanup]=linux-modules-cleanup
+  [plocate-updatedb]=plocate-updatedb
+  [snapper-timeline]=snapper-timeline
+  [snapper-cleanup]=snapper-cleanup
+  [snapper]=snapper-timeline
+  [zram]=zram
+  [zram-generator]=zram
+)
+
+# Services that a fresh Omartix install must have enabled (mirrors Omarchy's
+# install/config/enable-services.sh, translated to runit).
+REQUIRED_SERVICES=(
+  cupsd
+  avahi-daemon
+  linux-modules-cleanup
+  docker
+  NetworkManager
+  power-profiles-daemon
+  sddm
+  earlyoom
+  bluetoothd
+  plocate-updatedb
+  snapper-timeline
+  snapper-cleanup
+  zram
+  fcron
+)
+
+# systemd unit → runit name (with optional `.service` stripped)
+sv_name() {
+  local name="${1%.service}"
+  name="${name%.socket}"
+  name="${name%.target}"
+  echo "${RUNIT_NAME[$name]:-$name}"
+}
+
+ensure_dir() {
+  mkdir -p "$SYSTEM_SV_AVAIL" "$SYSTEM_SV_ENABLED"
+}
+
+sv_available() {
+  [[ -d "$SYSTEM_SV_AVAIL/$1" ]]
+}
+
+link_system() {
+  local name="$1"
+  ensure_dir
+  if ! sv_available "$name"; then
+    echo "omartix-services: service '$name' has no definition in $SYSTEM_SV_AVAIL" >&2
+    return 1
+  fi
+  ln -sf "$SYSTEM_SV_AVAIL/$name" "$SYSTEM_SV_ENABLED/$name"
+  echo "enabled: $name"
+}
+
+enable_system() {
+  local name
+  for name in "$@"; do
+    link_system "$(sv_name "$name")" || true
+  done
+}
+
+disable_system() {
+  local name
+  for name in "$@"; do
+    name="$(sv_name "$name")"
+    rm -f "$SYSTEM_SV_ENABLED/$name"
+    echo "disabled: $name"
+  done
+}
+
+enable_all() {
+  enable_system "${REQUIRED_SERVICES[@]}"
+}
+
+status() {
+  ensure_dir
+  local name
+  for name in "$@"; do
+    name="$(sv_name "$name")"
+    if [[ -L "$SYSTEM_SV_ENABLED/$name" ]]; then
+      echo "enabled   $name"
+    elif sv_available "$name"; then
+      echo "disabled  $name"
+    else
+      echo "missing   $name"
+    fi
+  done
+}
+
+usage() {
+  cat <<USAGE
+Usage: omartix-services <enable-all|enable NAME...|disable NAME...|status [NAME...]|map>
+
+  enable-all          enable the full Omartix system service set
+  enable NAME...      enable services by systemd or runit name
+  disable NAME...     disable services
+  status [NAME...]    show state (all required services when no names given)
+  map                 print the systemd → runit mapping table
+USAGE
+}
+
+case "${1:-}" in
+  enable-all)
+    enable_all
+    ;;
+  enable)
+    shift
+    enable_system "$@"
+    ;;
+  disable)
+    shift
+    disable_system "$@"
+    ;;
+  status)
+    shift
+    if (( $# == 0 )); then
+      status "${REQUIRED_SERVICES[@]}"
+    else
+      status "$@"
+    fi
+    ;;
+  map)
+    for unit in "${!RUNIT_NAME[@]}"; do
+      printf '%-28s -> %s\n' "$unit.service" "${RUNIT_NAME[$unit]}"
+    done | sort
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

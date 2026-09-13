@@ -1,0 +1,66 @@
+#!/bin/bash
+# omartix-user-services — manage the per-user runit service set.
+#
+#   ensure-enabled   link the always-on (non-graphical) user services and make
+#                    sure a per-user runsvdir supervises them
+#   up-graphical     link + start the graphical user services (compositor up)
+
+set -uo pipefail
+
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+USER_SV_AVAIL="$OMARTIX_RUNIT_DIR/user-sv"
+USER_SV_ENABLED="$HOME/.local/share/omartix/runit/enabled"
+
+# Always supervised for the duration of a session (start before the compositor).
+ALWAYS_SERVICES=(bt-agent omarchy-tailscale-receive)
+# Started once the compositor is up (mirror systemd graphical-session.target).
+GRAPHICAL_SERVICES=(
+  omarchy-crash-watch
+  omarchy-fcitx5
+  omarchy-migrate-notify
+  omarchy-recover-internal-monitor
+  omarchy-sleep-lock
+  omarchy-speaker-tuning
+)
+
+link_service() {
+  local name="$1"
+  mkdir -p "$USER_SV_ENABLED"
+  if [[ -d "$USER_SV_AVAIL/$name" ]]; then
+    ln -sfn "$USER_SV_AVAIL/$name" "$USER_SV_ENABLED/$name"
+    return 0
+  fi
+  return 1
+}
+
+ensure_runsvdir() {
+  if ! pgrep -f "runsvdir.*$USER_SV_ENABLED" >/dev/null 2>&1; then
+    runsvdir -P "$USER_SV_ENABLED" >/dev/null 2>&1 &
+  fi
+}
+
+ensure-enabled() {
+  local s
+  for s in "${ALWAYS_SERVICES[@]}"; do
+    link_service "$s" || true
+  done
+  ensure_runsvdir
+}
+
+up-graphical() {
+  local s
+  for s in "${GRAPHICAL_SERVICES[@]}"; do
+    if link_service "$s"; then
+      SVDIR="$USER_SV_ENABLED" sv -w 5 up "$s" 2>/dev/null || true
+    fi
+  done
+}
+
+case "${1:-}" in
+  ensure-enabled) ensure-enabled ;;
+  up-graphical) up-graphical ;;
+  *)
+    echo "Usage: $0 <ensure-enabled|up-graphical>" >&2
+    exit 2
+    ;;
+esac

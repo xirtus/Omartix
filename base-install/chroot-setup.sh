@@ -1,35 +1,35 @@
-#!/bin/sh
+#!/bin/bash
+# chroot-setup.sh — configures the freshly installed Artix (runit) base system.
+# Run inside `artix-chroot /mnt` by install.sh. Root-owned configuration only;
+# Omarchy itself is installed later by bridge/install-omarchy.sh (Phase 2).
 set -e
 
-# Configurable variables (defaults can be overridden by env vars)
+# Overridable via environment (e.g. `artix-chroot /mnt env TIMEZONE=... /root/chroot-setup.sh`)
 TIMEZONE="${TIMEZONE:-Europe/Madrid}"
-LOCALE="${LOCALE:-es_ES.UTF-8}"
-HOSTNAME="${HOSTNAME:-artixbox}"
-USERNAME="${USERNAME:-artixuser}"
+LOCALE="${LOCALE:-en_US.UTF-8}"
+HOSTNAME="${HOSTNAME:-omartix}"
+USERNAME="${USERNAME:-omartix}"
 
-echo "=== Chroot Setup ==="
-echo "User: $USERNAME | Host: $HOSTNAME | Loc: $LOCALE"
+echo "=== Omartix chroot setup ==="
+echo "User: $USERNAME | Host: $HOSTNAME | Locale: $LOCALE | TZ: $TIMEZONE"
 
-# --- 1. Repositories (Multilib & Lib32) ---
-echo ">> Configuring Repositories..."
-# Enable Parallel Downloads
+# --- Repositories --------------------------------------------------------
+echo ">> Configuring repositories..."
 sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf
 
-# Enable [lib32] (Artix equivalent of multilib)
-# Remove comment from [lib32] and the Include line following it
+# Enable [lib32] (Artix multilib equivalent) so Steam/Wine work later.
 sed -i "/\[lib32\]/,/Include/"'s/^#//' /etc/pacman.conf
 
-# Refresh DBs
 pacman -Sy
 
+# --- Timezone / locale / hostname ----------------------------------------
 echo ">> Setting timezone..."
-ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
+ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
 hwclock --systohc
 
 echo ">> Setting locale..."
-# Uncomment en_US and target locale
 sed -i 's/^#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-if [ "$LOCALE" != "en_US.UTF-8" ]; then
+if [[ $LOCALE != "en_US.UTF-8" ]]; then
     sed -i "s/^#$LOCALE/$LOCALE/" /etc/locale.gen || echo "$LOCALE UTF-8" >> /etc/locale.gen
 fi
 locale-gen
@@ -38,120 +38,102 @@ echo "LANG=$LOCALE" > /etc/locale.conf
 echo ">> Setting hostname..."
 echo "$HOSTNAME" > /etc/hostname
 
-echo ">> Configuring Network..."
-# Enable NetworkManager (ensure it's installed first)
-pacman -S --noconfirm --needed networkmanager networkmanager-runit
-ln -sf /etc/runit/sv/NetworkManager /etc/runit/runsvdir/default/
+# --- Core services (runit) ----------------------------------------------
+echo ">> Enabling core runit services..."
+# Artix runit: a service is "enabled" by symlinking /etc/runit/sv/<name> into
+# /etc/runit/runsvdir/default/.
+enable_sv() {
+    local name="$1"
+    if [[ -d /etc/runit/sv/$name ]]; then
+        ln -sf "/etc/runit/sv/$name" "/etc/runit/runsvdir/default/$name"
+    else
+        echo "  (skip) service '$name' not present"
+    fi
+}
 
+enable_sv dbus
+enable_sv elogind
+enable_sv NetworkManager
+enable_sv fcron
+enable_sv dhcpcd
+
+# --- Users / passwords ---------------------------------------------------
 echo ">> Setting root password..."
-echo "Enter password for ROOT:"
 passwd
 
 echo ">> Creating user $USERNAME..."
 if id "$USERNAME" &>/dev/null; then
     echo "User $USERNAME already exists."
 else
-    # Modern Arch/Artix: elogind handles audio/video. We only need wheel.
-    useradd -m -G wheel,input "$USERNAME"
+    useradd -m -G wheel,input,audio,video "$USERNAME"
     echo "Enter password for USER $USERNAME:"
     passwd "$USERNAME"
 fi
 
 echo ">> Configuring sudo..."
 pacman -S --noconfirm --needed sudo
-# Uncomment wheel group
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-echo ">> Installing Bootloader & Tools..."
-# Install microcode here if not done in base, plus Limine
-pacman -S --noconfirm --needed limine efibootmgr btrfs-progs snapper cronie cronie-runit intel-ucode amd-ucode
+# --- Bootloader + tools --------------------------------------------------
+echo ">> Installing bootloader tools..."
+pacman -S --noconfirm --needed limine efibootmgr btrfs-progs snapper \
+    intel-ucode amd-ucode
 
-# --- Feature: NVIDIA ---
-if [ -f /.nvidia_install ]; then
-    echo ">> Installing NVIDIA Drivers (DKMS)..."
-    # linux-headers are required for dkms
+# --- NVIDIA (optional) ---------------------------------------------------
+if [[ -f /.nvidia_install ]]; then
+    echo ">> Installing NVIDIA drivers (DKMS)..."
     pacman -S --noconfirm --needed nvidia-dkms nvidia-utils lib32-nvidia-utils nvidia-settings linux-headers
-    
-    # Add nvidia modules to mkinitcpio
-    # We replace the MODULES=() line
     sed -i 's/^MODULES=(.*)/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-    
-    # Add kernel parameter for DRM
     echo "options nvidia_drm modeset=1 fbdev=1" > /etc/modprobe.d/nvidia.conf
-    
-    rm /.nvidia_install
+    rm -f /.nvidia_install
 fi
 
-# --- Feature: ZRAM ---
-if [ -f /.zram_install ]; then
-    echo ">> Configuring ZRAM..."
-    # We only need the kernel module and standard tools (util-linux)
-    # zram-generator package is useful for the config, but we will do manual init for runit
-    pacman -S --noconfirm --needed zram-generator
-
-    # Create a native runit service for ZRAM
+# --- ZRAM (optional) -----------------------------------------------------
+if [[ -f /.zram_install ]]; then
+    echo ">> Configuring ZRAM (runit service)..."
     mkdir -p /etc/runit/sv/zram
-    cat <<EOF > /etc/runit/sv/zram/run
+    cat > /etc/runit/sv/zram/run <<'EOF'
 #!/bin/sh
-# 1. Load module (ensure 1 device exists)
-modprobe zram num_devices=1
-
-# 2. Reset if exists (safety)
+exec 2>&1
+modprobe zram num_devices=1 2>/dev/null || true
 zramctl --reset /dev/zram0 2>/dev/null || true
-
-# 3. Setup (50% of RAM, zstd compression)
-# zramctl finds the first free device (zram0) and initializes it
-zramctl --find --size 50% --algorithm zstd --mkfs
-
-# 4. Activate swap
-mkswap /dev/zram0 >/dev/null
-swapon /dev/zram0
-
-# 5. Pause to keep service 'up'
-exec chpst -b pause
+zramctl --find --size 50% --algorithm zstd 2>/dev/null || true
+mkswap /dev/zram0 >/dev/null 2>&1 || true
+swapon /dev/zram0 2>/dev/null || true
+exec sleep infinity
 EOF
-
-    cat <<EOF > /etc/runit/sv/zram/finish
+    cat > /etc/runit/sv/zram/finish <<'EOF'
 #!/bin/sh
-# Cleanup on stop
-swapoff /dev/zram0
-zramctl --reset /dev/zram0
+exec 2>&1
+swapoff /dev/zram0 2>/dev/null || true
+zramctl --reset /dev/zram0 2>/dev/null || true
 EOF
-
-    chmod +x /etc/runit/sv/zram/run
-    chmod +x /etc/runit/sv/zram/finish
-    
-    # Enable it
-    ln -s /etc/runit/sv/zram /etc/runit/runsvdir/default/
-    
-    rm /.zram_install
+    chmod +x /etc/runit/sv/zram/run /etc/runit/sv/zram/finish
+    ln -sf /etc/runit/sv/zram /etc/runit/runsvdir/default/zram
+    rm -f /.zram_install
 fi
 
+# --- initramfs (LUKS + BTRFS) -------------------------------------------
 echo ">> Configuring mkinitcpio for LUKS/BTRFS..."
-# Safe replacement for HOOKS
-# We want: base udev autodetect keyboard keymap modconf block encrypt filesystems fsck
-NEW_HOOKS="HOOKS=(base udev autodetect keyboard keymap modconf block encrypt filesystems fsck)"
-sed -i "s/^HOOKS=.*/$NEW_HOOKS/" /etc/mkinitcpio.conf
+sed -i "s/^HOOKS=.*/HOOKS=(base udev autodetect keyboard keymap modconf block encrypt filesystems fsck)/" /etc/mkinitcpio.conf
 
 echo ">> Generating initramfs..."
 mkinitcpio -P
 
-echo ">> Enabling Cron..."
-ln -sf /etc/runit/sv/cronie /etc/runit/runsvdir/default/
-
-# Enable weekly fstrim for SSD health
-echo ">> Configuring SSD Trim..."
-cat <<EOF > /etc/cron.weekly/fstrim
+# --- SSD trim (weekly) ---------------------------------------------------
+echo ">> Configuring weekly SSD trim..."
+mkdir -p /etc/cron.weekly
+cat > /etc/cron.weekly/fstrim <<'EOF'
 #!/bin/sh
 fstrim -v /
 EOF
 chmod +x /etc/cron.weekly/fstrim
 
+# --- Limine (UEFI fallback path) ----------------------------------------
 echo ">> Deploying Limine (UEFI)..."
 mkdir -p /boot/EFI/BOOT
-# We use the "Fallback" path (/EFI/BOOT/BOOTX64.EFI).
-# This makes the drive bootable on any UEFI system without needing to register
-# NVRAM variables with efibootmgr (which can be flaky in chroot).
+# Fallback path (/EFI/BOOT/BOOTX64.EFI) boots on any UEFI system without
+# registering NVRAM variables.
 cp /usr/share/limine/BOOTX64.EFI /boot/EFI/BOOT/BOOTX64.EFI
 
-echo "=== Chroot Setup Complete ==="
+echo "=== Chroot setup complete ==="

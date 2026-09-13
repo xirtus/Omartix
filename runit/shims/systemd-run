@@ -1,0 +1,79 @@
+#!/bin/bash
+# systemd-run — runit shim.
+#
+# systemd-run's cgroup/scope semantics have no runit equivalent, but the calls
+# Omarchy makes fall into two useful behaviours:
+#
+#   systemd-run --scope --quiet --collect CMD...   → run CMD directly
+#   systemd-run --user --on-active="2s" CMD...     → run CMD after a delay,
+#                                                    detached from the caller
+#   systemd-run --user --unit=X CMD... --wait      → run CMD in the background
+#
+# Everything else degrades to "run the command" or "run it detached".
+
+set -uo pipefail
+
+delay=0
+detach=0
+wait_flag=0
+cmd=()
+
+while (($#)); do
+  case "$1" in
+    --scope) ;;
+    --user|--system|--collect|--quiet|--no-block|--no-ask-password|-q) ;;
+    --on-active=*)
+      val="${1#--on-active=}"
+      case "$val" in
+        *ms) delay=$((10#${val%ms} / 1000)) ;;
+        *s) delay=$((10#${val%s})) ;;
+        *m) delay=$((10#${val%m} * 60)) ;;
+        *h) delay=$((10#${val%h} * 3600)) ;;
+        *) delay=$((10#${val})) ;;
+      esac
+      ;;
+    --on-active)
+      shift
+      val="$1"
+      case "$val" in
+        *ms) delay=$((10#${val%ms} / 1000)) ;;
+        *s) delay=$((10#${val%s})) ;;
+        *m) delay=$((10#${val%m} * 60)) ;;
+        *h) delay=$((10#${val%h} * 3600)) ;;
+        *) delay=$((10#${val})) ;;
+      esac
+      ;;
+    --unit=*|--timer-property=*|--description=*|--slice=*|--property=*|-p|-t) ;;
+    --unit|--timer-property|--description|--slice|--property)
+      shift
+      ;;
+    --wait)
+      wait_flag=1
+      ;;
+    -*) ;;
+    *)
+      cmd+=("$1")
+      ;;
+  esac
+  shift
+done
+
+[[ ${#cmd[@]} -eq 0 ]] && exit 0
+
+if (( delay > 0 )); then
+  # Detached delayed run: survive the caller's shell and the closing terminal.
+  if (( wait_flag )); then
+    sleep "$delay"
+    exec "${cmd[@]}"
+  else
+    setsid sh -c "sleep $delay; exec \"\$@\"" sh "${cmd[@]}" </dev/null >/dev/null 2>&1 &
+  fi
+elif (( wait_flag )); then
+  exec "${cmd[@]}"
+else
+  # Background but still useful: `--unit` + `--collect` patterns just want
+  # "start this and don't block"; run it detached.
+  setsid "${cmd[@]}" </dev/null >/dev/null 2>&1 &
+fi
+
+exit 0

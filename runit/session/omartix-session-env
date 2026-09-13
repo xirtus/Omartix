@@ -1,0 +1,46 @@
+#!/bin/bash
+# omartix-session-env — serialize the session environment for per-user runit
+# services. The session wrapper writes the base environment before the
+# compositor starts; omartix-session-up writes the full environment (including
+# WAYLAND_DISPLAY/DISPLAY) once the compositor is up.
+
+set -uo pipefail
+
+OMARTIX_SESSION_ENV="${OMARTIX_SESSION_ENV:-$HOME/.local/state/omartix/session-env}"
+
+shell_quote() {
+  # POSIX-safe single-quote escaping: ' -> '\'' ; then wrap the whole value.
+  printf "%s" "$1" | sed "s/'/'\\\\''/g"
+}
+
+write_env() {
+  local exclude_wayland="${1:-0}"
+  mkdir -p "$(dirname "$OMARTIX_SESSION_ENV")"
+  local tmp
+  tmp="$OMARTIX_SESSION_ENV.tmp"
+  : > "$tmp"
+
+  while IFS= read -r line; do
+    local key="${line%%=*}"
+    local val="${line#*=}"
+    # Skip the wayland/display vars on the base pass so graphical services can
+    # tell "compositor not up yet" from "compositor up".
+    if (( exclude_wayland )); then
+      case "$key" in
+        WAYLAND_DISPLAY|DISPLAY) continue ;;
+      esac
+    fi
+    printf "export %s='%s'\n" "$key" "$(shell_quote "$val")" >> "$tmp"
+  done < <(env)
+
+  mv "$tmp" "$OMARTIX_SESSION_ENV"
+}
+
+case "${1:-write}" in
+  write-base) write_env 1 ;;
+  write) write_env 0 ;;
+  *)
+    echo "Usage: $0 <write|write-base>" >&2
+    exit 2
+    ;;
+esac

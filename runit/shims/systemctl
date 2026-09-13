@@ -1,0 +1,297 @@
+#!/bin/bash
+# systemctl — runit compatibility shim for Omartix (Artix runit).
+#
+# Translates the systemctl calls Omarchy's install/runtime scripts make into
+# runit `sv` operations. System units map through the same table as
+# `omartix-services`; `--user` units map to a per-user `runsvdir` under
+# ~/.local/share/omartix/runit/.
+#
+# It is intentionally privilege-neutral: callers run it as root or via sudo.
+# It is installed to /usr/local/bin so it shadows any real systemctl.
+
+set -uo pipefail
+
+# --------------------------------------------------------------------------
+# Runit paths & service-name mapping
+# --------------------------------------------------------------------------
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+
+SYSTEM_SV_AVAIL="/etc/runit/sv"
+# The directory runsvdir actually supervises. Artix uses /etc/runit/runsvdir/current
+# (→ default); Void (future Nullset) uses /var/service. Detect so the shim is
+# portable across both runit flavours.
+if [[ -d /etc/runit/runsvdir/current ]]; then
+  SYSTEM_SV_ENABLED="/etc/runit/runsvdir/current"
+elif [[ -d /var/service ]]; then
+  SYSTEM_SV_ENABLED="/var/service"
+else
+  SYSTEM_SV_ENABLED="/etc/runit/runsvdir/default"
+fi
+export SVDIR="$SYSTEM_SV_ENABLED"
+
+USER_SV_AVAIL="$OMARTIX_RUNIT_DIR/user-sv"
+USER_SV_ENABLED="${XDG_RUNTIME_DIR:-$HOME/.local/share/omartix/runit}/enabled"
+# Keep a stable fallback so `--user` still resolves outside a session.
+[[ -z ${XDG_RUNTIME_DIR:-} ]] && USER_SV_ENABLED="$HOME/.local/share/omartix/runit/enabled"
+
+declare -A RUNIT_NAME=(
+  [NetworkManager]=NetworkManager
+  [bluetooth]=bluetoothd
+  [cups]=cupsd
+  [cups-browsed]=cups-browsed
+  [docker]=docker
+  [avahi-daemon]=avahi-daemon
+  [ufw]=ufw
+  [iwd]=iwd
+  [sddm]=sddm
+  [gdm]=gdm
+  [lightdm]=lightdm
+  [power-profiles-daemon]=power-profiles-daemon
+  [dbus]=dbus
+  [elogind]=elogind
+  [acpid]=acpid
+  [seatd]=seatd
+  [alsa-restore]=alsa
+  [fcron]=fcron
+  [cronie]=fcron
+  [systemd-oomd]=earlyoom
+  [systemd-timesyncd]=systemd-timesyncd
+  [systemd-resolved]=systemd-resolved
+  [linux-modules-cleanup]=linux-modules-cleanup
+  [plocate-updatedb]=plocate-updatedb
+  [snapper-timeline]=snapper-timeline
+  [snapper-cleanup]=snapper-cleanup
+  [snapper]=snapper-timeline
+  [zram]=zram
+)
+
+sv_name() {
+  local name="${1%.service}"
+  name="${name%.socket}"
+  name="${name%.target}"
+  echo "${RUNIT_NAME[$name]:-$name}"
+}
+
+# --------------------------------------------------------------------------
+# Argument parsing
+# --------------------------------------------------------------------------
+IS_USER=0
+CMD=""
+TARGETS=()
+POWER_CMD=""
+EXTRA_WAIT=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --user) IS_USER=1 ;;
+    --system) IS_USER=0 ;;
+    --global) ;;
+    --now|--no-block|--no-wall|--no-ask-password|--collect|--wait) ;;
+    -q|--quiet|--no-pager|--full) ;;
+    -f|--force) ;;
+    --plain) ;;
+    -w) EXTRA_WAIT=1 ;;
+    enable|disable|start|stop|restart|reload|try-restart|status|is-enabled|is-active|is-failed|daemon-reload|mask|unmask|list-units|list-unit-files|import-environment|set-environment|unset-environment|reenable|preset|reset-failed)
+      CMD="$arg" ;;
+    poweroff|halt|reboot|suspend|hibernate|hybrid-sleep|kexec)
+      POWER_CMD="$arg" ;;
+    -*) ;; # other flags ignored
+    *) TARGETS+=("$arg") ;;
+  esac
+done
+
+# --------------------------------------------------------------------------
+# Power / session manager commands
+# --------------------------------------------------------------------------
+case "$POWER_CMD" in
+  poweroff)
+    if command -v loginctl >/dev/null 2>&1; then loginctl poweroff || true; fi
+    /sbin/poweroff 2>/dev/null || shutdown -h now
+    exit 0 ;;
+  reboot)
+    if command -v loginctl >/dev/null 2>&1; then loginctl reboot || true; fi
+    /sbin/reboot 2>/dev/null || shutdown -r now
+    exit 0 ;;
+  halt)
+    /sbin/halt 2>/dev/null || shutdown -h now
+    exit 0 ;;
+  suspend)
+    if command -v loginctl >/dev/null 2>&1; then loginctl suspend || true; fi
+    exit 0 ;;
+  hibernate)
+    if command -v loginctl >/dev/null 2>&1; then loginctl hibernate || true; fi
+    exit 0 ;;
+esac
+
+# daemon-reload is a no-op on runit (runsvdir picks up new links live).
+if [[ $CMD == "daemon-reload" ]]; then exit 0; fi
+
+# import-environment / set-environment are handled by the session env file; no-op here.
+if [[ $CMD == "import-environment" || $CMD == "set-environment" || $CMD == "unset-environment" || $CMD == "reset-failed" ]]; then
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
+# User services (per-user runsvdir)
+# --------------------------------------------------------------------------
+if [[ $IS_USER -eq 1 ]]; then
+  case "$CMD" in
+    enable)
+      mkdir -p "$USER_SV_ENABLED"
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        if [[ -d "$USER_SV_AVAIL/$name" ]]; then
+          ln -sfn "$USER_SV_AVAIL/$name" "$USER_SV_ENABLED/$name"
+          echo "Created symlink $USER_SV_ENABLED/$name"
+        else
+          echo "Warning: user service $name not found in $USER_SV_AVAIL" >&2
+        fi
+      done
+      ;;
+    disable)
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        rm -f "$USER_SV_ENABLED/$name"
+      done
+      ;;
+    start)
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        [[ -d "$USER_SV_AVAIL/$name" ]] && ln -sfn "$USER_SV_AVAIL/$name" "$USER_SV_ENABLED/$name" 2>/dev/null || true
+        SVDIR="$USER_SV_ENABLED" sv -w 5 up "$name" 2>/dev/null || true
+      done
+      ;;
+    stop)
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        SVDIR="$USER_SV_ENABLED" sv -w 5 down "$name" 2>/dev/null || true
+      done
+      ;;
+    restart)
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        SVDIR="$USER_SV_ENABLED" sv -w 5 restart "$name" 2>/dev/null || true
+      done
+      ;;
+    reload)
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        SVDIR="$USER_SV_ENABLED" sv -w 5 reload "$name" 2>/dev/null || true
+      done
+      ;;
+    status)
+      for t in "${TARGETS[@]}"; do
+        name="$(sv_name "$t")"
+        SVDIR="$USER_SV_ENABLED" sv status "$name" 2>/dev/null || true
+      done
+      ;;
+    is-enabled)
+      name="$(sv_name "${TARGETS[0]:-}")"
+      [[ -L "$USER_SV_ENABLED/$name" ]] && exit 0 || exit 1
+      ;;
+    is-active)
+      name="$(sv_name "${TARGETS[0]:-}")"
+      if SVDIR="$USER_SV_ENABLED" sv status "$name" 2>/dev/null | grep -q '^run:'; then exit 0; else exit 1; fi
+      ;;
+    list-units|list-unit-files)
+      for d in "$USER_SV_ENABLED"/*/; do
+        [[ -d $d ]] || continue
+        basename "$d" | sed 's/^/enabled  /'
+      done
+      exit 0
+      ;;
+    *)
+      exit 0
+      ;;
+  esac
+  exit 0
+fi
+
+# --------------------------------------------------------------------------
+# System services
+# --------------------------------------------------------------------------
+case "$CMD" in
+  enable)
+    mkdir -p "$SYSTEM_SV_ENABLED"
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      if [[ -d "$SYSTEM_SV_AVAIL/$name" ]]; then
+        ln -sfn "$SYSTEM_SV_AVAIL/$name" "$SYSTEM_SV_ENABLED/$name"
+        echo "Created symlink $SYSTEM_SV_ENABLED/$name"
+      else
+        echo "Warning: service $name not found in $SYSTEM_SV_AVAIL" >&2
+      fi
+    done
+    ;;
+  disable)
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      rm -f "$SYSTEM_SV_ENABLED/$name"
+    done
+    ;;
+  mask)
+    # A "mask" for an absent systemd unit is a no-op; for a present runit
+    # service we remove the enablement link so it never runs.
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      rm -f "$SYSTEM_SV_ENABLED/$name"
+    done
+    ;;
+  unmask|reenable|preset)
+    :
+    ;;
+  start)
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      if [[ -d "$SYSTEM_SV_AVAIL/$name" ]]; then
+        [[ -L "$SYSTEM_SV_ENABLED/$name" ]] || ln -sfn "$SYSTEM_SV_AVAIL/$name" "$SYSTEM_SV_ENABLED/$name"
+        sv -w 5 up "$name" 2>/dev/null || true
+      fi
+    done
+    ;;
+  stop)
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      sv -w 5 down "$name" 2>/dev/null || true
+    done
+    ;;
+  restart|try-restart)
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      sv -w 5 restart "$name" 2>/dev/null || true
+    done
+    ;;
+  reload)
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      sv -w 5 reload "$name" 2>/dev/null || sv -w 5 restart "$name" 2>/dev/null || true
+    done
+    ;;
+  status)
+    for t in "${TARGETS[@]}"; do
+      name="$(sv_name "$t")"
+      sv status "$name" 2>/dev/null || true
+    done
+    ;;
+  is-enabled)
+    name="$(sv_name "${TARGETS[0]:-}")"
+    [[ -L "$SYSTEM_SV_ENABLED/$name" ]] && exit 0 || exit 1
+    ;;
+  is-active)
+    name="$(sv_name "${TARGETS[0]:-}")"
+    if sv status "$name" 2>/dev/null | grep -q '^run:'; then exit 0; else exit 1; fi
+    ;;
+  is-failed)
+    name="$(sv_name "${TARGETS[0]:-}")"
+    if sv status "$name" 2>/dev/null | grep -qE '^(fail|down).*want up'; then exit 0; else exit 1; fi
+    ;;
+  list-units|list-unit-files)
+    for d in "$SYSTEM_SV_ENABLED"/*/; do
+      [[ -d $d ]] || continue
+      basename "$d" | sed 's/^/enabled  /'
+    done
+    exit 0
+    ;;
+esac
+
+exit 0

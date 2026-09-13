@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fcitx5 input method. Mirrors default/systemd/user/omarchy-fcitx5.service.
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_wayland || exit 0
+command -v fcitx5 >/dev/null 2>&1 || exit 0
+
+exec fcitx5 --disable notificationitem

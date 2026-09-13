@@ -1,0 +1,13 @@
+#!/bin/sh
+# Recover the internal monitor toggle when no external display is connected.
+# Mirrors default/systemd/user/omarchy-recover-internal-monitor.service (oneshot).
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_wayland || exit 0
+[ -e "$HOME/.local/state/omarchy/toggles/hypr/internal-monitor-disable.lua" ] || exec sleep infinity
+command -v omarchy-hw-recover-internal-monitor >/dev/null 2>&1 || exec sleep infinity
+
+omarchy-hw-recover-internal-monitor
+exec sleep infinity

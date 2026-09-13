@@ -1,0 +1,63 @@
+#!/bin/bash
+# timedatectl — runit shim (no systemd-timedated on Artix).
+set -uo pipefail
+
+list_timezones() {
+  # Mirror `timedatectl list-timezones`: tz names, excluding the right/ and
+  # posix/ alias trees.
+  find /usr/share/zoneinfo -type f 2>/dev/null \
+    | sed 's#^/usr/share/zoneinfo/##' \
+    | grep -vE '^(right|posix)/|/(right|posix)/' \
+    | grep -vE '\.(tab|list)$' \
+    | sort
+}
+
+status() {
+  echo "               Local time: $(date '+%a %Y-%m-%d %H:%M:%S %Z')"
+  if [[ -L /etc/localtime ]]; then
+    echo "               Time zone: $(readlink /etc/localtime | sed 's#^.*/zoneinfo/##')"
+  else
+    echo "               Time zone: UTC"
+  fi
+}
+
+while (($#)); do
+  case "$1" in
+    list-timezones)
+      list_timezones
+      exit 0
+      ;;
+    set-timezone)
+      tz="${2:-}"
+      if [[ -z $tz ]]; then
+        echo "Error: missing timezone" >&2
+        exit 1
+      fi
+      if [[ -e /usr/share/zoneinfo/$tz ]]; then
+        ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime
+      else
+        echo "Error: unknown timezone $tz" >&2
+        exit 1
+      fi
+      exit 0
+      ;;
+    set-ntp|set-local-rtc|set-time)
+      # Accepted for compatibility; NTP is left to the optional NTP service and
+      # local/UTC RTC is managed via hwclock.
+      shift
+      ;;
+    status)
+      status
+      exit 0
+      ;;
+    --no-pager|--no-ask-password|-q|--quiet) ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# No args → status
+status

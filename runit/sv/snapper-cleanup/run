@@ -1,0 +1,10 @@
+#!/bin/sh
+# Daily snapper cleanup (number/retention limits). Native replacement for
+# snapper-cleanup.timer.
+exec 2>&1
+exec sh -c 'while :; do
+  if command -v snapper >/dev/null 2>&1 && snapper -c root get-config >/dev/null 2>&1; then
+    snapper -c root cleanup timeline >/dev/null 2>&1 || true
+  fi
+  sleep 86400
+done'

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Save incoming Taildrop files. Mirrors default/systemd/user/omarchy-tailscale-receive.service.
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_session_env || exit 0
+command -v tailscale >/dev/null 2>&1 || exit 0
+command -v omarchy-tailscale-receive >/dev/null 2>&1 || exit 0
+
+exec omarchy-tailscale-receive

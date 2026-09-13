@@ -1,51 +1,66 @@
-# OMARTIX = Artix Linux + Omarchy (Runit Edition)
+# Omartix
 
-<img width="1680" height="1184" alt="grok-image-0d33d396-38d9-4d9e-add9-fb214b225cfc" src="https://github.com/user-attachments/assets/60be1ca4-9def-4beb-991d-740dfa7fa0eb" />
+<img width="1680" height="1184" alt="Omartix" src="https://github.com/user-attachments/assets/60be1ca4-9def-4beb-991d-740dfa7fa0eb" />
 
-This repository contains a complete installer to deploy **Artix Linux (Runit)** with an encrypted BTRFS filesystem (LUKS2) and automatically configure the **Omarchy** distribution.
+**Omartix** is an installer that turns **Artix Linux (Runit)** into **Omarchy** —
+the beautiful, opinionated Hyprland/Quickshell desktop by
+[DHH](https://dhh.dk) — on a runit base instead of systemd.
 
-## Project Structure
+It tracks upstream [Omarchy](https://github.com/omacom/omarchy) `quattro`
+(v4.0.0.alpha) and adapts its systemd layer to native runit.
 
-*   `base-install/`: Scripts to install the base Artix system (partitioning, encryption, kernel, bootloader).
-*   `bridge/`: Compatibility layer to adapt Omarchy (originally Systemd-based) to Artix (Runit).
-*   `omarchy-config/`: Original Omarchy configuration files and scripts.
+## How it works
 
-## Installation Guide
+| Directory | Purpose |
+| --- | --- |
+| `base-install/` | Phase 1: install a minimal Artix runit base (LUKS2 + BTRFS + Limine). |
+| `bridge/` | Phase 2: install Omarchy v4 and adapt it to runit. |
+| `runit/` | The runit adaptation layer: native services, per-user services, the UWSM-replacement session manager, and systemd shims. |
+| `omarchy-config/` | Vendored upstream Omarchy source (kept pristine; see `.omartix-upstream`). |
+| `docs/` | Porting map, test checklist, and the Nullset plan. |
+
+## Installation
 
 ### Prerequisites
-1.  Boot using an Artix Linux ISO (the **runit** version).
-2.  Active Internet connection (WiFi or Ethernet).
-3.  Connected to a power source (if using a laptop).
 
-### Step 1: Base System
-1.  Clone this repository or copy the `artix-omarchy-repo` folder to the live system.
-2.  Enter the base installation folder:
+1. Boot the **Artix Linux (runit)** ISO.
+2. Connect to the network (`connmanctl` on the live ISO).
+3. UEFI system (the installer is UEFI-only).
+
+### Phase 1 — base system
+
 ```bash
-cd artix-omarchy-repo/base-install
-```
-3.  Run the master installer:
-```bash
+# From the live ISO, as root:
+git clone https://github.com/xirtus/Omartix.git artix-installer
+cd artix-installer/base-install
 ./install.sh
 ```
-*   Follow the on-screen instructions to select the disk and set passwords. 
-*   Once finished, type `reboot` and remove the USB drive.
 
-### Step 2: Omarchy Installation
-After rebooting and logging into your new Artix system (black screen/TTY):
+Follow the prompts (disk, passwords, NVIDIA/ZRAM). The installer partitions the
+disk (GPT + LUKS2 + BTRFS), installs a minimal Artix runit base, configures
+Limine, and copies itself to `~/artix-installer` on the new system. Reboot.
 
-1.  Clone or copy this repository again (since the disk was wiped). *   *Note: If you installed git in the previous step, you can clone it directly.*
-2.  Navigate to the "bridge" folder:
+### Phase 2 — Omarchy
+
 ```bash
-cd artix-omarchy-repo/bridge
-```
-3.  Run the adapted Omarchy installer:
-```bash
+# On the new system, after logging in and connecting to the network (nmtui):
+cd ~/artix-installer/bridge
 ./install-omarchy.sh
 ```
-*   This script will install the necessary packages, enable the `systemctl-shim` compatibility layer, and apply the configurations.
 
-## Technical Notes
+This installs the runit adaptation layer, lays down Omarchy, installs the
+package set (repo + AUR via yay), enables services, and finalizes the user.
+Reboot and SDDM will log you into the Omartix desktop.
 
-*   **UEFI:** The installer is designed exclusively for UEFI systems.
-*   **Docker:** A special optimized (No-COW) subvolume named `@docker` is created at `/var/lib/docker`.
-*   **Compatibility:** A custom *shim* is used to intercept `systemctl` calls and translate them into `runit` (sv) commands, ensuring that Omarchy services function correctly.
+## Technical notes
+
+* **UEFI only**, Limine on the `Fallback` path (`/EFI/BOOT/BOOTX64.EFI`).
+* **BTRFS** subvolumes: `@`, `@home`, `@snapshots`, plus No-COW `@docker` and
+  snapshot-excluded `@pkg`/`@log`/`@tmp`.
+* **LUKS2** encryption with snapper snapshots.
+* **systemd → runit**: a `systemctl` shim plus native runit services replace
+  systemd; UWSM is replaced by `omartix-session`. See [`docs/PORTING.md`](docs/PORTING.md).
+
+## License
+
+MIT. Omarchy upstream is also MIT. See [`omarchy-config/LICENSE`](omarchy-config/LICENSE).

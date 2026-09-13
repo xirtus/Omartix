@@ -1,0 +1,22 @@
+#!/bin/bash
+# omartix-session-up — run from the Hyprland autostart once the compositor is up.
+#
+# Replaces the two systemd-specific autostart lines
+#   systemctl --user import-environment ...
+#   dbus-update-activation-environment --systemd --all
+# and the direct omarchy-provision-first-run call:
+#
+#   1. publish the full environment (now including WAYLAND_DISPLAY/DISPLAY)
+#   2. refresh D-Bus activation env (via the --systemd-stripping shim)
+#   3. start the graphical user services
+#   4. run first-run provisioning (idempotent; enables user units via the shim)
+
+set -uo pipefail
+
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+
+"$OMARTIX_RUNIT_DIR/session/omartix-session-env" write
+dbus-update-activation-environment --systemd --all 2>/dev/null || true
+"$OMARTIX_RUNIT_DIR/session/omartix-user-services" up-graphical
+
+command -v omarchy-provision-first-run >/dev/null 2>&1 && omarchy-provision-first-run || true

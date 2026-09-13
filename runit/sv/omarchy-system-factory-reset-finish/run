@@ -1,0 +1,11 @@
+#!/bin/sh
+# Finish a factory reset on the first boot after it: drop the previous root,
+# recreate @home/@log, scrub state. Native replacement for
+# install/provisioning/omarchy-system-factory-reset-finish.service.
+exec 2>&1
+
+[ -f /var/lib/omarchy/provisioning/wipe-pending ] || exec sleep infinity
+command -v omarchy-system-factory-reset-finish >/dev/null 2>&1 || exec sleep infinity
+
+omarchy-system-factory-reset-finish || true
+exec sleep infinity

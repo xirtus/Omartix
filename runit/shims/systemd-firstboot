@@ -1,0 +1,55 @@
+#!/bin/bash
+# systemd-firstboot — runit shim.
+#
+# Writes the same first-boot settings Omarchy's provisioning wizard uses,
+# without systemd-firstboot. Supports --keymap/--hostname/--timezone/--locale
+# and a --root= prefix (applied to the target chroot during install).
+set -uo pipefail
+
+root=""
+keymap=""
+hostname=""
+timezone=""
+locale=""
+
+while (($#)); do
+  case "$1" in
+    --root=*) root="${1#--root=}" ;;
+    --root) root="${2:-}"; shift ;;
+    --keymap=*) keymap="${1#--keymap=}" ;;
+    --keymap) keymap="${2:-}"; shift ;;
+    --hostname=*) hostname="${1#--hostname=}" ;;
+    --hostname) hostname="${2:-}"; shift ;;
+    --timezone=*) timezone="${1#--timezone=}" ;;
+    --timezone) timezone="${2:-}"; shift ;;
+    --locale=*) locale="${1#--locale=}" ;;
+    --locale) locale="${2:-}"; shift ;;
+    --force|--prompt|--copy-root-password|--setup-machine-id|--delete-root-password|--root-password=*|--root-password) ;;
+    *) ;;
+  esac
+  shift
+done
+
+[[ -n $root ]] || root=""
+
+if [[ -n $keymap ]]; then
+  vconsole="$root/etc/vconsole.conf"
+  install -D -m 0644 /dev/null "$vconsole" 2>/dev/null || mkdir -p "$(dirname "$vconsole")"
+  printf 'KEYMAP=%s\nXKBLAYOUT=%s\n' "$keymap" "$keymap" >"$vconsole"
+fi
+
+if [[ -n $hostname ]]; then
+  printf '%s\n' "$hostname" >"$root/etc/hostname"
+fi
+
+if [[ -n $timezone ]]; then
+  if [[ -e "$root/usr/share/zoneinfo/$timezone" || -e "/usr/share/zoneinfo/$timezone" ]]; then
+    ln -sf "/usr/share/zoneinfo/$timezone" "$root/etc/localtime"
+  fi
+fi
+
+if [[ -n $locale ]]; then
+  printf 'LANG=%s\n' "$locale" >"$root/etc/locale.conf"
+fi
+
+exit 0

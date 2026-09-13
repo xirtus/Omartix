@@ -1,0 +1,50 @@
+#!/bin/bash
+# omartix-session — runit session manager (replaces UWSM).
+#
+# UWSM manages the Hyprland session through a systemd user manager, which Artix
+# runit does not have. This wrapper provides the runit-native equivalent:
+#
+#   1. source the Omarchy env bootstrap (OMARCHY_PATH + PATH)
+#   2. ensure a session D-Bus daemon
+#   3. start a per-user runsvdir supervising ~/.local/share/omartix/runit/enabled
+#   4. publish the base session environment for user services
+#   5. exec the compositor (default: Hyprland)
+#
+# It is wired into the Wayland session by omarchy.desktop's Exec line.
+
+set -uo pipefail
+
+# 1. Environment (mirrors /usr/share/uwsm/env.d/10-omarchy + default/uwsm/default).
+if [ -r /usr/share/omarchy/default/bash/env-bootstrap ]; then
+  . /usr/share/omarchy/default/bash/env-bootstrap
+fi
+: "${OMARCHY_PATH:=/usr/share/omarchy}"
+export OMARCHY_PATH
+
+export TERMINAL="${TERMINAL:-xdg-terminal-exec}"
+export EDITOR="${EDITOR:-omarchy-launch-editor --inline}"
+
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate bash --shims)" 2>/dev/null || true
+fi
+
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+export OMARTIX_RUNIT_DIR
+export OMARTIX_SESSION_ENV="$HOME/.local/state/omartix/session-env"
+
+# 2. Session D-Bus.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  if command -v dbus-daemon >/dev/null 2>&1; then
+    DBUS_SESSION_BUS_ADDRESS="$(dbus-daemon --session --fork --print-address=1 2>/dev/null)"
+    export DBUS_SESSION_BUS_ADDRESS
+  fi
+fi
+
+# 3. Per-user runsvdir for user services.
+"$OMARTIX_RUNIT_DIR/session/omartix-user-services" ensure-enabled
+
+# 4. Publish base environment (no WAYLAND_DISPLAY yet).
+"$OMARTIX_RUNIT_DIR/session/omartix-session-env" write-base
+
+# 5. Launch the compositor.
+exec "${@:-Hyprland}"

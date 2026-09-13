@@ -1,0 +1,13 @@
+#!/bin/sh
+# Notify about pending migrations once per login. Mirrors
+# default/systemd/user/omarchy-migrate-notify.service (Type=oneshot).
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_wayland || exit 0
+[ -d /usr/share/omarchy/migrations ] || exec sleep infinity
+command -v omarchy-migrate-notify >/dev/null 2>&1 || exec sleep infinity
+
+omarchy-migrate-notify
+exec sleep infinity

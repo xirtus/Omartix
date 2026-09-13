@@ -1,73 +1,61 @@
 #!/bin/bash
+# Omartix — Phase 1: base Artix Linux (runit) install.
+#
+# Boot the Artix *runit* ISO, connect to the network, then run:
+#   ./install.sh
+#
+# This partitions and formats the disk (LUKS2 + BTRFS), installs a minimal
+# Artix runit base, configures the bootloader, and copies this repository to
+# the new system so Phase 2 (bridge/install-omarchy.sh) can be run after reboot.
 set -e
 
-# Ensure we are running from the script's directory
 cd "$(dirname "$(realpath "$0")")"
+REPO_ROOT="$(realpath "$(dirname "$PWD")")"
 
-echo "=== Artix Linux Installer (BTRFS + LUKS + Limine) ==="
+echo "=== Omartix installer — Artix Linux (runit) + BTRFS + LUKS + Limine ==="
 
-# --- Disk Selection ---
-echo "Available Disks:"
-lsblk -d -n -o NAME,SIZE,MODEL | grep -v "loop" | grep -v "sr0"
+# --- Disk selection ------------------------------------------------------
+echo "Available disks:"
+lsblk -d -n -o NAME,SIZE,MODEL | grep -v -E 'loop|sr0'
 echo ""
-read -p "Enter target disk (e.g., nvme0n1 or sda): " DISK_NAME
+read -rp "Enter target disk (e.g. nvme0n1 or sda): " DISK_NAME
 
-# Sanitize input
 DISK_NAME=$(echo "$DISK_NAME" | tr -d ' /dev/')
-DISK="/$DISK_NAME"
+DISK="/dev/$DISK_NAME"
 
-if [ ! -b "$DISK" ]; then
-    echo "Error: Device $DISK not found."
+if [[ ! -b $DISK ]]; then
+    echo "Error: device $DISK not found." >&2
     exit 1
 fi
 
 echo ">> TARGET: $DISK"
 echo "WARNING: ALL DATA ON $DISK WILL BE ERASED."
-read -p "Type 'yes' to confirm: " CONFIRM
-if [ "$CONFIRM" != "yes" ]; then
-    echo "Aborted."
-    exit 1
-fi
+read -rp "Type 'yes' to confirm: " CONFIRM
+[[ $CONFIRM == "yes" ]] || { echo "Aborted."; exit 1; }
 
-# --- Feature Selection ---
-echo "------------------------------------------------"
-echo ">> Feature Selection"
-echo "------------------------------------------------"
+# --- Feature selection ---------------------------------------------------
+echo ""
+echo ">> Feature selection"
+read -rp "NVIDIA GPU — install proprietary drivers? [y/N]: " NVIDIA_ASK
+[[ $NVIDIA_ASK =~ ^[Yy]$ ]] && touch /tmp/.nvidia_install
 
-# 1. NVIDIA
-read -p "Do you have an NVIDIA GPU and want proprietary drivers? [y/N]: " NVIDIA_ASK
-if [[ "$NVIDIA_ASK" =~ ^[Yy]$ ]]; then
-    echo ">> NVIDIA drivers will be installed."
-    touch /tmp/.nvidia_install
-else
-    echo ">> Skipping NVIDIA drivers (using open source)."
-fi
+read -rp "Enable ZRAM (compressed swap)? Recommended. [Y/n]: " ZRAM_ASK
+ZRAM_ASK=${ZRAM_ASK:-Y}
+[[ $ZRAM_ASK =~ ^[Yy]$ ]] && touch /tmp/.zram_install
 
-# 2. ZRAM (Swap)
-read -p "Enable ZRAM (Compressed RAM Swap)? Recommended for most PCs. [Y/n]: " ZRAM_ASK
-ZRAM_ASK=${ZRAM_ASK:-Y} # Default Yes
-if [[ "$ZRAM_ASK" =~ ^[Yy]$ ]]; then
-    echo ">> ZRAM will be configured."
-    touch /tmp/.zram_install
-else
-    echo ">> Skipping ZRAM."
-fi
-
-# --- Optimization & Fixes ---
-echo ">> Enabling Parallel Downloads..."
+# --- Pacman prep ---------------------------------------------------------
+echo ">> Enabling ParallelDownloads..."
 sed -i 's/^#ParallelDownloads/ParallelDownloads/' /etc/pacman.conf
 
-echo ">> Updating Keyrings (Prevents GPG errors)..."
-pacman -Sy --noconfirm artix-keyring archlinux-keyring || echo "Warning: Keyring update failed, hoping for the best..."
+echo ">> Updating keyrings (prevents GPG signature errors)..."
+pacman -Sy --noconfirm artix-keyring archlinux-keyring 2>/dev/null || \
+    echo "Warning: keyring update failed, continuing..."
 
-# --- Partitioning ---
+# --- Partitioning --------------------------------------------------------
 echo ">> Partitioning $DISK..."
-# Zap disk
 wipefs -a "$DISK"
-# Define Partitions (Robust Logic)
-# If disk name ends in a digit (nvme0n1, mmcblk0), partitions are p1, p2
-# If disk name ends in a letter (sda, vda), partitions are 1, 2
-if [[ "$DISK_NAME" =~ [0-9]$ ]]; then
+# NVMe/eMMC (nvme0n1, mmcblk0) use p1/p2; SATA/virtio (sda, vda) use 1/2.
+if [[ $DISK_NAME =~ [0-9]$ ]]; then
     EFI_PART="${DISK}p1"
     ROOT_PART="${DISK}p2"
 else
@@ -75,103 +63,92 @@ else
     ROOT_PART="${DISK}2"
 fi
 
+# GPT: 512 MiB EFI system partition + the rest as LUKS root.
+sgdisk -Z "$DISK"
+sgdisk -n 1:0:+512M -t 1:ef00 "$DISK"
+sgdisk -n 2:0:0   -t 2:8309 "$DISK"    # 8309 = Linux LUKS
+partprobe "$DISK" 2>/dev/null || true
+sleep 1
+
 echo ">> Partitions: EFI=$EFI_PART, ROOT=$ROOT_PART"
 
-# --- Formatting & Mounting ---
+# --- Formatting ----------------------------------------------------------
 echo ">> Formatting EFI..."
 mkfs.fat -F32 "$EFI_PART"
 
-echo ">> Encryption Setup..."
-echo "NOTE: If prompted 'Are you sure?', you must type 'YES' in UPPERCASE."
+echo ">> Encryption setup (type 'YES' in UPPERCASE if prompted)..."
 ./luks.sh "$ROOT_PART"
 
-echo ">> BTRFS Setup..."
+echo ">> BTRFS layout..."
 ./btrfs-layout.sh /dev/mapper/cryptroot
 
-echo ">> Mounting Boot..."
+echo ">> Mounting boot..."
+mkdir -p /mnt/boot
 mount "$EFI_PART" /mnt/boot
 
-# --- Installation ---
-echo ">> Installing Base System..."
-# Include microcode and useful tools immediately
-basestrap /mnt base base-devel runit elogind-runit linux linux-firmware \
-    intel-ucode amd-ucode nano git
+# --- Base install --------------------------------------------------------
+echo ">> Installing base system..."
+basestrap /mnt base base-devel runit elogind-runit dbus-runit \
+    linux linux-firmware intel-ucode amd-ucode \
+    nano git networkmanager networkmanager-runit \
+    btrfs-progs cryptsetup limine efibootmgr snapper fcron fcron-runit
 
-echo ">> Generating Fstab..."
+echo ">> Generating fstab..."
 fstabgen -U /mnt >> /mnt/etc/fstab
 
-# --- Configuration Phase ---
-echo ">> Preparing Chroot..."
+# --- Chroot configuration ------------------------------------------------
+echo ">> Preparing chroot..."
 cp chroot-setup.sh /mnt/root/
 chmod +x /mnt/root/chroot-setup.sh
 
-# Pass feature flags to chroot
-if [ -f /tmp/.nvidia_install ]; then touch /mnt/.nvidia_install; fi
-if [ -f /tmp/.zram_install ]; then touch /mnt/.zram_install; fi
+[[ -f /tmp/.nvidia_install ]] && touch /mnt/.nvidia_install
+[[ -f /tmp/.zram_install ]] && touch /mnt/.zram_install
 
-echo "------------------------------------------------"
-echo "Entering Chroot. Follow the prompts inside."
-echo "------------------------------------------------"
+echo ">> Entering chroot..."
 artix-chroot /mnt /root/chroot-setup.sh
 
-# --- Bootloader Install (UEFI ONLY) ---
-echo ">> Bootloader Setup..."
-# No need to run limine-install for UEFI. The EFI binary is copied in chroot-setup.sh.
-
-# --- Limine Config ---
-echo ">> Generating Limine Config..."
+# --- Bootloader ----------------------------------------------------------
+echo ">> Writing Limine config..."
 ROOT_UUID=$(blkid -s UUID -o value /dev/mapper/cryptroot)
 LUKS_UUID=$(blkid -s UUID -o value "$ROOT_PART")
 
-# Limine searches for limine.cfg in /limine/ relative to the boot partition
 mkdir -p /mnt/boot/limine
 
-cat <<EOF > /mnt/boot/limine/limine.cfg
-TIMEOUT=5
-DEFAULT_ENTRY=Artix Linux
+{
+  echo "TIMEOUT=5"
+  echo "DEFAULT_ENTRY=Artix Linux"
+  echo ""
+  echo ":Artix Linux"
+  echo "    PROTOCOL=linux"
+  echo "    KERNEL_PATH=boot:///vmlinuz-linux"
+  [[ -f /mnt/boot/intel-ucode.img ]] && echo "    MODULE_PATH=boot:///intel-ucode.img"
+  [[ -f /mnt/boot/amd-ucode.img ]]  && echo "    MODULE_PATH=boot:///amd-ucode.img"
+  echo "    MODULE_PATH=boot:///initramfs-linux.img"
+  echo ""
+  echo "    CMDLINE=cryptdevice=UUID=$LUKS_UUID:cryptroot root=UUID=$ROOT_UUID rootflags=subvol=@ rw quiet"
+} > /mnt/boot/limine/limine.cfg
 
-:Artix Linux
-    PROTOCOL=linux
-    KERNEL_PATH=boot:///vmlinuz-linux
-    # Microcode loading
-    MODULE_PATH=boot:///intel-ucode.img
-    MODULE_PATH=boot:///amd-ucode.img
-    MODULE_PATH=boot:///initramfs-linux.img
-    
-    CMDLINE=cryptdevice=UUID=$LUKS_UUID:cryptroot root=UUID=$ROOT_UUID rootflags=subvol=@ rw quiet
-EOF
-
-# --- Persistence (Copy Installer to Target) ---
-echo ">> Copying installer to target system..."
-REPO_ROOT="$(dirname "$(pwd)")"
-
-# Detect the user home (it will be the only folder in /mnt/home besides lost+found)
-REAL_USER=$(ls /mnt/home | grep -v "lost+found" | grep -v "artix-installer" | head -n 1)
-
-if [ -n "$REAL_USER" ]; then
-    TARGET_HOME="/mnt/home/$REAL_USER/artix-installer"
-    cp -r "$REPO_ROOT" "$TARGET_HOME"
-    chown -R 1000:1000 "$TARGET_HOME"
-    FINAL_MSG="cd ~/artix-installer/bridge && ./install-omarchy.sh"
-else
-    # Fallback if user detection failed
-    cp -r "$REPO_ROOT" "/mnt/home/artix-installer"
-    chown -R 1000:1000 "/mnt/home/artix-installer"
-    FINAL_MSG="cd /home/artix-installer/bridge && ./install-omarchy.sh"
+# --- Persist the installer for Phase 2 -----------------------------------
+echo ">> Copying installer to the new system..."
+TARGET_HOME="/mnt/home/artix-installer"
+if [[ -d /mnt/home ]]; then
+    REAL_USER=$(ls /mnt/home | grep -v -E 'lost\+found|artix-installer' | head -n1)
+    [[ -n $REAL_USER ]] && TARGET_HOME="/mnt/home/$REAL_USER/artix-installer"
 fi
 
-echo "------------------------------------------------"
-echo "=== INSTALLATION COMPLETE! ==="
-echo "------------------------------------------------"
-echo "1. Reboot your system."
-echo "2. Login with your user."
-echo "3. CONNECT TO THE INTERNET (WiFi/Ethernet) <- CRITICAL!"
-echo "   - Ethernet: Should connect automatically."
-echo "   - WiFi: Since we installed NetworkManager, run 'nmtui' to select"
-echo "           your network visually. It's already included!"
-echo "4. Run the following command to install Omarchy:"
+mkdir -p "$TARGET_HOME"
+cp -a "$REPO_ROOT"/. "$TARGET_HOME"/
+chown -R 1000:1000 "$TARGET_HOME"
+
 echo ""
-echo "   $FINAL_MSG"
+echo "=== BASE INSTALL COMPLETE ==="
+echo "1. Reboot (type 'reboot'), remove the USB drive."
+echo "2. Log in as your user."
+echo "3. Connect to the network:"
+echo "     Ethernet: should connect automatically."
+echo "     WiFi:     run 'nmtui' (NetworkManager is already installed)."
+echo "4. Install Omarchy (Phase 2):"
 echo ""
-echo "UEFI System ready. Type 'reboot' to restart."
+echo "     cd ~/artix-installer/bridge && ./install-omarchy.sh"
+echo ""
 sync

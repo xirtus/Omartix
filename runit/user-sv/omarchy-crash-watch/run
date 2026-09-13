@@ -1,0 +1,18 @@
+#!/bin/sh
+# Announce process crashes + offer AI diagnosis. Mirrors
+# default/systemd/user/omarchy-crash-watch.service.
+#
+# This service depends on the systemd journal (journalctl -f MESSAGE_ID=...)
+# which Artix runit does not have. Without a persistent journal it stays idle
+# rather than looping on the journalctl shim.
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+[ -d /var/log/journal ] || exec sleep infinity
+
+wait_wayland || exit 0
+[ -e "$HOME/.local/state/omarchy/toggles/crash-capture-off" ] && exec sleep infinity
+command -v omarchy-crash-watch >/dev/null 2>&1 || exec sleep infinity
+
+exec omarchy-crash-watch

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Speaker tuning filter-chain. Mirrors default/systemd/user/omarchy-speaker-tuning.service.
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_session_env || exit 0
+command -v pipewire >/dev/null 2>&1 || exit 0
+pgrep -x pipewire >/dev/null 2>&1 || exit 0
+
+exec pipewire -c omarchy-speaker-tuning.conf

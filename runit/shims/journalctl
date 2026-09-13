@@ -1,0 +1,19 @@
+#!/bin/bash
+# journalctl — runit shim.
+#
+# Artix runit has no systemd journal. Omarchy's debug/upload-log/crash-watch
+# helpers read journalctl output, so we degrade gracefully: regular reads
+# return empty (those call sites already tolerate empty output), and `-f`
+# (follow) exits 1 so a `journalctl -f ... |` pipeline terminates instead of
+# spinning.
+#
+# When a syslog daemon is present we could read /var/log/messages here; that is
+# intentionally left as a documented extension point rather than a guess.
+
+for arg in "$@"; do
+  case "$arg" in
+    -f|--follow) exit 1 ;;
+  esac
+done
+
+exit 0

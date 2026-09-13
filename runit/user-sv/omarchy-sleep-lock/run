@@ -1,0 +1,10 @@
+#!/bin/sh
+# Lock the session before suspend. Mirrors default/systemd/user/omarchy-sleep-lock.service.
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_wayland || exit 0
+command -v omarchy-system-sleep-monitor >/dev/null 2>&1 || exit 0
+
+exec omarchy-system-sleep-monitor

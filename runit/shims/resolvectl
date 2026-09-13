@@ -1,0 +1,20 @@
+#!/bin/bash
+# resolvectl — runit shim.
+#
+# No systemd-resolved on Artix runit; DNS is owned by NetworkManager. Accept
+# the common queries Omarchy's ecosystem issues and report a neutral status so
+# scripts that call it continue without error.
+
+for arg in "$@"; do
+  case "$arg" in
+    status)
+      echo "Link 1 (lo)"
+      echo "    Current DNS Server: 127.0.0.1"
+      echo "    DNS Servers: 127.0.0.1"
+      ;;
+    flush-caches|reset-statistics|revert|reload) ;;
+    *) ;;
+  esac
+done
+
+exit 0

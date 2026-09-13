@@ -1,0 +1,11 @@
+#!/bin/sh
+# Daily locate index refresh with Omarchy's options: keep Btrfs subvolume mounts
+# searchable and exclude Snapper snapshots. Native replacement for
+# plocate-updatedb.timer.
+exec 2>&1
+exec sh -c 'while :; do
+  if command -v updatedb >/dev/null 2>&1; then
+    updatedb --prune-bind-mounts=no --add-prunepaths=/.snapshots 2>/dev/null || true
+  fi
+  sleep 86400
+done'

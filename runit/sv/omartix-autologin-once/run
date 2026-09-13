@@ -1,0 +1,15 @@
+#!/bin/sh
+# Drop the first-boot autologin drop-in exactly once (unencrypted installs).
+# Native replacement for the self-removing omarchy-provision-autologin-once.service
+# that omarchy-provision-owner installs.
+exec 2>&1
+
+[ -f /etc/sddm.conf.d/autologin.conf ] || exec sleep infinity
+
+rm -f /etc/sddm.conf.d/autologin.conf
+
+# Self-disable so this runs exactly once.
+rm -f /etc/runit/runsvdir/default/omartix-autologin-once 2>/dev/null || true
+rm -f /etc/runit/runsvdir/current/omartix-autologin-once 2>/dev/null || true
+
+exec sleep infinity

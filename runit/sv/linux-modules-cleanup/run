@@ -1,0 +1,10 @@
+#!/bin/sh
+# Weekly kernel-modules-hook cleanup. On Arch this runs as a systemd oneshot at
+# shutdown; on runit we run it periodically instead.
+exec 2>&1
+exec sh -c 'while :; do
+  if command -v linux-modules-cleanup >/dev/null 2>&1; then
+    linux-modules-cleanup 2>/dev/null || true
+  fi
+  sleep 604800
+done'

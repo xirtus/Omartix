@@ -1,0 +1,10 @@
+#!/bin/sh
+# Hourly Btrfs timeline snapshot. snapper ships no runit service on Artix, so
+# this is the native replacement for snapper-timeline.timer.
+exec 2>&1
+exec sh -c 'while :; do
+  if command -v snapper >/dev/null 2>&1 && snapper -c root get-config >/dev/null 2>&1; then
+    snapper -c root create -c timeline -d "timeline" >/dev/null 2>&1 || true
+  fi
+  sleep 3600
+done'

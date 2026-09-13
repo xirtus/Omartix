@@ -1,0 +1,11 @@
+#!/bin/sh
+# Bluetooth pairing agent (auto-accept). Mirrors default/systemd/user/bt-agent.service.
+exec 2>&1
+OMARTIX_RUNIT_DIR="${OMARTIX_RUNIT_DIR:-/usr/share/omartix/runit}"
+. "$OMARTIX_RUNIT_DIR/user-sv/lib.sh"
+
+wait_session_env || exit 0
+[ -d /sys/class/bluetooth ] || exit 0
+[ -x /usr/bin/bt-agent ] || exit 0
+
+exec /usr/bin/bt-agent -c NoInputNoOutput

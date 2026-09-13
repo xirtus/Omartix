@@ -1,0 +1,56 @@
+#!/bin/bash
+# localectl — runit shim (no systemd-localed on Artix).
+set -uo pipefail
+
+VCONSOLE=/etc/vconsole.conf
+
+list_keymaps() {
+  find /usr/share/kbd/keymaps -type f 2>/dev/null \
+    | sed 's#^/usr/share/kbd/keymaps/##' \
+    | grep -vE '\.gz$' \
+    | sort
+}
+
+set_vconsole_key() {
+  local key="$1" value="$2"
+  if [[ -f $VCONSOLE ]]; then
+    if grep -q "^$key=" "$VCONSOLE"; then
+      sed -i "s|^$key=.*|$key=$value|" "$VCONSOLE"
+    else
+      printf '%s=%s\n' "$key" "$value" >>"$VCONSOLE"
+    fi
+  else
+    printf '%s=%s\n' "$key" "$value" >"$VCONSOLE"
+  fi
+}
+
+while (($#)); do
+  case "$1" in
+    list-keymaps)
+      list_keymaps
+      exit 0
+      ;;
+    set-keymap)
+      map="${2:-}"
+      [[ -z $map ]] && { echo "Error: missing keymap" >&2; exit 1; }
+      set_vconsole_key KEYMAP "$map"
+      command -v loadkeys >/dev/null 2>&1 && loadkeys "$map" 2>/dev/null || true
+      exit 0
+      ;;
+    set-x11-keymap)
+      # Accepted for compatibility; Hyprland reads XKBLAYOUT/XKBVARIANT from
+      # /etc/vconsole.conf (written by systemd-firstboot during provisioning).
+      shift 2
+      ;;
+    status)
+      [[ -f $VCONSOLE ]] && cat "$VCONSOLE"
+      exit 0
+      ;;
+    --no-pager|--no-ask-password|-q|--quiet) ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
